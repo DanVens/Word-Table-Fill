@@ -24,16 +24,16 @@ namespace WebApplication1.Command
 
             // 0) Optional scalars (simple tag -> string)
             if (dto.scalars is { Count: > 0 })
-                FillContentControlsIn(main.Document.Body!, dto.scalars);
+                FillScalarsEverywhere(main, dto.scalars);    // <— use this
 
             // 1) Tables: prefer by tag; else by order
             if (dto.rowsByTag is { Count: > 0 })
             {
-                PopulateTableByTag(main, dto.tableTag, dto.rowsByTag, dto.templateRowIndex);
+                PopulateTableByTag(main, dto.tableTag, dto.rowsByTag);
             }
             else if (dto.rowsByOrder is { Count: > 0 })
             {
-                PopulateTableByOrder(main, dto.tableTag, dto.rowsByOrder, dto.templateRowIndex);
+                PopulateTableByOrder(main, dto.tableTag, dto.rowsByOrder);
             }
 
             main.Document.Save();
@@ -50,15 +50,14 @@ namespace WebApplication1.Command
             IEnumerable<IList<string>> rows,
             int? templateRowIndex = null)
         {
-            var (table, tplRow1, _, tplRow2) = FindTemplateRecord(main, tableTag, templateRowIndex);
+            var (table, tplRow1, _, tplRow2) = FindTemplateRecord(main, tableTag);
 
             // 1) Cache a clean copy of the template record (row or row-pair)
             var rec1 = (TableRow)tplRow1.CloneNode(true);
             TableRow? rec2 = tplRow2 != null ? (TableRow)tplRow2.CloneNode(true) : null;
             ClearHeaderFlag(rec1);
             if (rec2 != null) ClearHeaderFlag(rec2);
-
-            // 2) Remove only rows AFTER the template record (don’t delete the template itself)
+            
             RemoveRowsAfterTemplateRecord(table, tplRow1, tplRow2);
 
             // 3) Insert new rows immediately after the template record
@@ -72,8 +71,7 @@ namespace WebApplication1.Command
                 int v = 0; // next value from the JSON array
                 foreach (var sdt in EnumerateSdts(newR1, newR2))
                 {
-                    // No special handling for index tags; just take the next value.
-                    SetSdtText(sdt, v < values.Count ? values[v++] : string.Empty);
+                    ReplaceSdtTextPreserveFormatting(sdt, v < values.Count ? values[v++] : string.Empty);
                 }
 
                 anchor = table.InsertAfter(newR1, anchor);
@@ -92,10 +90,9 @@ namespace WebApplication1.Command
         public static void PopulateTableByTag(
             MainDocumentPart main,
             string? tableTag,
-            IEnumerable<IDictionary<string, string>> rows,
-            int? templateRowIndex = null)
+            IEnumerable<IDictionary<string, string>> rows)
         {
-            var (table, tplRow1, _, tplRow2) = FindTemplateRecord(main, tableTag, templateRowIndex);
+            var (table, tplRow1, _, tplRow2) = FindTemplateRecord(main, tableTag);
 
             var rec1 = (TableRow)tplRow1.CloneNode(true);
             TableRow? rec2 = tplRow2 != null ? (TableRow)tplRow2.CloneNode(true) : null;
@@ -107,7 +104,6 @@ namespace WebApplication1.Command
 
             foreach (var inputMap in rows)
             {
-                // Use exactly what the caller sent. No auto-number, no defaults.
                 var map = new Dictionary<string, string>(inputMap, StringComparer.OrdinalIgnoreCase);
 
                 var newR1 = (TableRow)rec1.CloneNode(true);
@@ -134,22 +130,15 @@ namespace WebApplication1.Command
         // =========================================
         // Helpers (record detection, cleanup, filling)
         // =========================================
-
-        /// <summary>
-        /// Find the target table, its template record (row1 + optional row2),
-        /// and the first row's per-cell tags. The template row is either:
-        ///  - dto.templateRowIndex, or
-        ///  - the row with the MOST cells that contain SDTs.
-        /// If the next row also contains SDTs, treat it as a two-row record.
-        /// </summary>
-        private static (Table table, TableRow tplRow1, List<string?> firstRowTags, TableRow? tplRow2)
-    FindTemplateRecord(MainDocumentPart main, string? tableTag, int? templateRowIndex)
+        
+    private static (Table table, TableRow tplRow1, List<string?> firstRowTags, TableRow? tplRow2)
+    FindTemplateRecord(MainDocumentPart main, string? tableTag)
 {
     if (main?.Document?.Body == null)
         throw new InvalidOperationException("No document body.");
 
-    Table? table = null;
-
+    // 1) Resolve the table
+    Table table;
     if (!string.IsNullOrWhiteSpace(tableTag))
     {
         var wraps = main.Document.Body
@@ -158,9 +147,11 @@ namespace WebApplication1.Command
             .ToList();
 
         if (wraps.Count == 0)
-            throw new InvalidOperationException($"No content control wrapper with tag '{tableTag}' was found. Wrap *one* table with that tag.");
+            throw new InvalidOperationException(
+                $"No content control wrapper with tag '{tableTag}' was found. Wrap *one* table with that tag.");
         if (wraps.Count > 1)
-            throw new InvalidOperationException($"More than one table wrapper tagged '{tableTag}' found ({wraps.Count}). Keep exactly one.");
+            throw new InvalidOperationException(
+                $"More than one table wrapper tagged '{tableTag}' found ({wraps.Count}). Keep exactly one.");
 
         table = wraps[0].Descendants<Table>().FirstOrDefault()
              ?? throw new InvalidOperationException($"Wrapper '{tableTag}' did not contain a table.");
@@ -168,48 +159,46 @@ namespace WebApplication1.Command
     else
     {
         var allTables = main.Document.Body.Elements<Table>().ToList();
-        if (allTables.Count == 0) throw new InvalidOperationException("No table found.");
+        if (allTables.Count == 0)
+            throw new InvalidOperationException("No table found.");
         if (allTables.Count > 1)
-            throw new InvalidOperationException($"Document contains {allTables.Count} tables. Set a unique tableTag and wrap the intended one.");
+            throw new InvalidOperationException(
+                $"Document contains {allTables.Count} tables. Wrap the intended one and set tableTag.");
         table = allTables[0];
     }
 
+    // 2) Pick the template row automatically
     var allRows = table.Elements<TableRow>().ToList();
-    if (allRows.Count == 0) throw new InvalidOperationException("Table has no rows.");
+    if (allRows.Count == 0)
+        throw new InvalidOperationException("Table has no rows.");
 
-    // choose template row
-    TableRow tplRow1;
-    if (templateRowIndex is int idx && idx >= 0 && idx < allRows.Count)
-    {
-        tplRow1 = allRows[idx];
-    }
-    else
-    {
-        tplRow1 = allRows
-            .Select(r => new
-            {
-                Row = r,
-                SdtCells = r.Elements<TableCell>().Count(c => c.Descendants<SdtElement>().Any()),
-                Cells = r.Elements<TableCell>().Count()
-            })
-            .OrderByDescending(x => x.SdtCells)
-            .ThenByDescending(x => x.Cells)
-            .FirstOrDefault(x => x.SdtCells > 0)?.Row
-            ?? throw new InvalidOperationException("No row with content controls found in the chosen table.");
-    }
+    var tplRow1 = allRows
+        .Select(r => new
+        {
+            Row = r,
+            SdtCells = r.Elements<TableCell>().Count(c => c.Descendants<SdtElement>().Any()),
+            Cells = r.Elements<TableCell>().Count()
+        })
+        .OrderByDescending(x => x.SdtCells)
+        .ThenByDescending(x => x.Cells)
+        .FirstOrDefault(x => x.SdtCells > 0)?.Row
+        ?? throw new InvalidOperationException(
+            "No row with content controls found in the chosen table.");
 
-    // treat next row as part of record if it also has SDTs
+    // 3) If the next row also has SDTs, treat it as the second half of a two-row record
     TableRow? tplRow2 = tplRow1.NextSibling<TableRow>();
     if (tplRow2 != null && !tplRow2.Descendants<SdtElement>().Any())
         tplRow2 = null;
 
-    var tags = tplRow1.Elements<TableCell>()
-        .Select(cell => cell.Descendants<SdtElement>()
-            .Select(GetTagOrAlias)
-            .FirstOrDefault(t => !string.IsNullOrWhiteSpace(t)))
+    // 4) Extract the tags for each cell in the chosen row (null if a cell has no CC)
+    var firstRowTags = tplRow1.Elements<TableCell>()
+        .Select(cell =>
+            cell.Descendants<SdtElement>()
+                .Select(GetTagOrAlias)
+                .FirstOrDefault(t => !string.IsNullOrWhiteSpace(t)))
         .ToList();
 
-    return (table, tplRow1, tags, tplRow2);
+    return (table, tplRow1, firstRowTags, tplRow2);
 }
 
         // Delete every row that comes AFTER the template record (row or row-pair)
@@ -248,17 +237,95 @@ namespace WebApplication1.Command
             return sdt.SdtProperties?.GetFirstChild<SdtAlias>()?.Val?.Value;
         }
 
-        private static void SetSdtText(SdtElement sdt, string? text)
+        static void ReplaceSdtText(SdtElement sdt, string? value)
         {
-            var t = sdt.Descendants<Text>().FirstOrDefault();
-            if (t == null)
+            value ??= string.Empty;
+
+            // Find the actual content container inside the SDT
+            OpenXmlElement? content =
+                sdt.GetFirstChild<SdtContentRun>() ??
+                (OpenXmlElement?)sdt.GetFirstChild<SdtContentBlock>() ??
+                sdt.GetFirstChild<SdtContentCell>();
+
+            if (content == null) return;
+
+            // Remove everything inside the control
+            content.RemoveAllChildren();
+
+            // Create one run with one text node, with spaces preserved
+            var t = new Text(value) { Space = SpaceProcessingModeValues.Preserve };
+            var r = new Run(t);
+
+            // For block/cell SDTs we must wrap the run in a paragraph
+            if (content is SdtContentRun)
             {
-                var p = sdt.Descendants<Paragraph>().FirstOrDefault() ?? sdt.AppendChild(new Paragraph());
-                var r = p.GetFirstChild<Run>() ?? p.AppendChild(new Run());
-                t = r.AppendChild(new Text());
+                content.Append(r);
             }
-            t.Text = text ?? string.Empty;
+            else
+            {
+                content.Append(new Paragraph(r));
+            }
         }
+static void ReplaceSdtTextPreserveFormatting(SdtElement sdt, string? value)
+{
+    value ??= string.Empty;
+
+    // Run-level SDT
+    if (sdt.GetFirstChild<SdtContentRun>() is SdtContentRun runContent)
+    {
+        var firstRun = runContent.Descendants<Run>().FirstOrDefault();
+        var rPr = firstRun?.RunProperties?.CloneNode(true) as RunProperties;
+
+        runContent.RemoveAllChildren();
+
+        var r = new Run(new Text(value) { Space = SpaceProcessingModeValues.Preserve });
+        if (rPr != null) r.RunProperties = rPr;
+        runContent.Append(r);
+        return;
+    }
+
+    // Block-level SDT (paragraphs)
+    if (sdt.GetFirstChild<SdtContentBlock>() is SdtContentBlock blockContent)
+    {
+        var firstPara = blockContent.Descendants<Paragraph>().FirstOrDefault();
+        var pPr = firstPara?.ParagraphProperties?.CloneNode(true) as ParagraphProperties;
+        var firstRun = firstPara?.Descendants<Run>().FirstOrDefault();
+        var rPr = firstRun?.RunProperties?.CloneNode(true) as RunProperties;
+
+        blockContent.RemoveAllChildren();
+
+        var p = new Paragraph();
+        if (pPr != null) p.ParagraphProperties = pPr;
+
+        var r = new Run(new Text(value) { Space = SpaceProcessingModeValues.Preserve });
+        if (rPr != null) r.RunProperties = rPr;
+
+        p.Append(r);
+        blockContent.Append(p);
+        return;
+    }
+
+    // Cell-level SDT (table cell content)
+    if (sdt.GetFirstChild<SdtContentCell>() is SdtContentCell cellContent)
+    {
+        var firstPara = cellContent.Descendants<Paragraph>().FirstOrDefault();
+        var pPr = firstPara?.ParagraphProperties?.CloneNode(true) as ParagraphProperties;
+        var firstRun = firstPara?.Descendants<Run>().FirstOrDefault();
+        var rPr = firstRun?.RunProperties?.CloneNode(true) as RunProperties;
+
+        cellContent.RemoveAllChildren();
+
+        var p = new Paragraph();
+        if (pPr != null) p.ParagraphProperties = pPr;
+
+        var r = new Run(new Text(value) { Space = SpaceProcessingModeValues.Preserve });
+        if (rPr != null) r.RunProperties = rPr;
+
+        p.Append(r);
+        cellContent.Append(p);
+    }
+}
+
         private static void FillContentControlsIn(OpenXmlElement scope, IDictionary<string, string> map)
         {
             foreach (var sdt in scope.Descendants<SdtElement>())
@@ -266,8 +333,27 @@ namespace WebApplication1.Command
                 var tag = GetTagOrAlias(sdt);
                 if (string.IsNullOrWhiteSpace(tag)) continue;
                 if (!map.TryGetValue(tag, out var val)) continue;
-                SetSdtText(sdt, val);
+                ReplaceSdtTextPreserveFormatting(sdt, val);
             }
         }
+        private static void FillScalarsEverywhere(MainDocumentPart main, IDictionary<string,string> map)
+        {
+            if (map == null || map.Count == 0) return;
+
+            // Body
+            if (main.Document?.Body != null)
+                FillContentControlsIn(main.Document.Body, map);
+
+            // All headers
+            foreach (var hp in main.HeaderParts)
+                if (hp.Header != null)
+                    FillContentControlsIn(hp.Header, map);
+
+            // All footers
+            foreach (var fp in main.FooterParts)
+                if (fp.Footer != null)
+                    FillContentControlsIn(fp.Footer, map);
+        }
+
     }
 }
