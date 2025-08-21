@@ -1,0 +1,27 @@
+{
+  "scalars": {
+    "fld_istaiga": "Vilniaus \"Ryto\" progimnazija",
+    "fld_data": "2025-09-01",
+    "fld_klase": "4",
+    "fld_dalykas": "Lietuvių kalba ir literatūra (skaitymas)",
+    "fld_grupe": "312"
+  },
+
+  "tableTag": "studentsTbl",
+  "rowsByTag": [
+    {
+      "fld_nr": "1",
+      "fld_vardaspav": "Jonas Jonaitis",
+      "fld_asmkodas": "39901010001",
+      "fld_kodai": "A,V",
+      "fld_pastabos": ""
+    },
+    {
+      "fld_nr": "5",
+      "fld_vardaspav": "Ieva Ievaitė",
+      "fld_asmkodas": "40102020002",
+      "fld_kodai": "N,I",
+      "fld_pastabos": "Neaktyvko"
+    }
+  ]
+}

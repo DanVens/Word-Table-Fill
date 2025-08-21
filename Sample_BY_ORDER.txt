@@ -1,0 +1,15 @@
+{
+  "scalars": {
+    "fld_istaiga": "Vilniaus \"Ryto\" progimnazija",
+    "fld_data": "2025-09-01",
+    "fld_klase": "4",
+    "fld_dalykas": "Lietuvių kalba ir literatūra (skaitymas)",
+    "fld_grupe": "312"
+  },
+
+  "tableTag": "studentsTbl",
+  "rowsByOrder": [
+    ["1", "Jonas Jonaitis", "39901010001", "A,V", ""],
+    ["5", "Ieva Ievaitė",   "40102020002", "N,I", "Neaktyvko"]
+  ]
+}
