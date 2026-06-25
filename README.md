@@ -1,4 +1,4 @@
-# Word Table Fill
+# Word Document Automation
 
 A robust ASP.NET Core web application for dynamically filling Word documents (DOCX) with data from JSON payloads. Perfect for generating documents from templates with table population and scalar field replacement.
 
